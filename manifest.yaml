@@ -1,0 +1,246 @@
+################################################################
+##                                                            ##
+## Sonatype Nexus IQ - Non Prod embedded backup demo manifest ##
+##                                                            ## 
+################################################################
+#* Manual step if changing startup.sh
+# kubectl -n sonatype delete configmap start-nexus
+# kubectl -n sonatype create configmap start-nexus --from-file=startup.sh
+#-------------------
+#* set secret values
+# OS01: azure | s3 | some other restic type
+# AAKI02: aws id
+# ASAK03: aws secret
+# AAN04: azure id
+# AAK05: azure secret
+# RP06: restic encryption pw 
+# BU07: azure-bucketname:/foldername | s3 bucket url
+# TW08: MS teams webhook url
+#-------------------
+# REDACTED UkVEQUNURUQ=
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sonatype
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nexus-secrets
+  namespace: sonatype
+type: Opaque
+data:
+  OS01: UkVEQUNURUQ= #changeme
+  AAKI02: UkVEQUNURUQ= #changeme
+  ASAK03: UkVEQUNURUQ= #changeme
+  AAN04: UkVEQUNURUQ= #changeme
+  AAK05: UkVEQUNURUQ= #changeme
+  RP06: UkVEQUNURUQ= #changeme
+  BU07: UkVEQUNURUQ= #changeme
+  TW08: UkVEQUNURUQ= #changeme
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: iq-pv
+  labels:
+    type: local
+spec:
+  storageClassName: manual
+  claimRef:
+    name: iq-pvc
+    namespace: sonatype
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/iq/data01"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: iq-pvc
+  namespace: sonatype
+spec:
+  storageClassName: manual
+  accessModes:
+    - ReadWriteOnce
+  volumeName: iq-pv
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/instance: nexus-iq-app
+    app.kubernetes.io/name: nexus-iq-app
+    app.kubernetes.io/version: 1.107.0
+  name: nexus-iq-app
+  namespace: sonatype
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: nexus-iq-app
+      app.kubernetes.io/name: nexus-iq-app
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: nexus-iq-app
+        app.kubernetes.io/name: nexus-iq-app
+    spec:
+      containers:
+      - image: sonatype/nexus-iq-server:1.107.0
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /ping
+            port: admin
+            scheme: HTTP
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        name: nexus-iq-app
+        volumeMounts:
+        - mountPath: "/sonatype-work"
+          name: iq-pv-storage
+        - name: start-nexus
+          mountPath: /opt/sonatype/nexus-iq-server/scripts
+        # - name: config-volume
+        #   mountPath: /etc/nexus-iq-server
+        ports:
+        - containerPort: 8070
+          name: application
+          protocol: TCP
+        - containerPort: 8071
+          name: admin
+          protocol: TCP
+        command:
+           - "sh"
+           - "-c"
+           - "/opt/sonatype/nexus-iq-server/scripts/startup.sh"
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /
+            port: application
+            scheme: HTTP
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        resources: {}
+        securityContext: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        envFrom:
+          - secretRef:
+              name: nexus-secrets
+      volumes:
+      - name: iq-pv-storage
+        persistentVolumeClaim:
+          claimName: iq-pvc
+      - name: start-nexus
+        configMap:
+          name: start-nexus
+          defaultMode: 0777
+      # - name: config-volume
+      #   configMap:
+      #     name: iq-server-cm
+      #     items:
+      #       - key: config.yml
+      #         path: config.yml
+      #     defaultMode: 420
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        fsGroup: 0
+        runAsUser: 0
+      terminationGracePeriodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: sonatype
+  name: nexus-iq-service
+  labels:
+    component: nexus-iq-service
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8070
+      targetPort: 8070
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: nexus-iq-app
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: start-nexus
+  namespace: sonatype
+data:
+  startup.sh: "#!/bin/bash -x\n#\n# Author: Martyn Kemp\n# Date: 23/03/2021\n# Purpose:
+    Allow consistent backup for stateful container app.\n#\n\n\nSTARTHOUR=23\nSTARTMIN=50\nWINDOW=10\nexport
+    OBJECTSTORE=$OS01\nexport AWS_ACCESS_KEY_ID=$AAKI02\nexport AWS_SECRET_ACCESS_KEY=$ASAK03\nexport
+    AZURE_ACCOUNT_NAME=$AAN04\nexport AZURE_ACCOUNT_KEY=$AAK05\nexport RESTIC_PASSWORD=$RP06\nexport
+    BACKUPURL=$BU07\nexport TEAMSWH=$TW08\n\n# check date/time within schedule, execute
+    backup func, else execute main program.\n# grab disk usage and send somewhere\ncheckSchedule()
+    {\n    THISHOUR=$(date +%H)\n    THISMIN=$(date +%M)\n    if [ \"$THISHOUR\" -eq
+    \"$STARTHOUR\" ]\n    then\n      if [ \"$THISMIN\" -ge \"$STARTMIN\" ]\n      then\n
+    \       if [ \"$THISMIN\" -le \"$(($STARTMIN + $WINDOW))\" ]\n        then\n          return
+    0\n        else\n          return 1\n        fi\n      else\n        return 1\n
+    \     fi\n    else\n      return 1\n    fi\n}\n\nbackup() {\n    echo \"Starting
+    Backup\"\n    cd /sonatype-work\n    # download our tinyweb server 1.6mb upx and
+    stripped is still huge\n    TWSHA256=1EBA09AEFA9CA09A69402FE51F97580A95656AC8327BE09631B61DE58816B8A0\n
+    \   TWRESULT=$(echo $TWSHA256\" tinyweb\" | sha256sum -c)\n    RETURNTW=$?\n    if
+    [ \"$RETURNTW\" -ne 0 ]\n    then\n      curl -OL https://github.com/kempy007/healthcheck-tinyweb/releases/download/v0.1.0/tinyweb\n
+    \     chmod 744 tinyweb\n    fi\n    TWRESULT2=$(echo $TWSHA256\" tinyweb\" |
+    sha256sum -c)\n    RETURNTW2=$?\n    if [ \"$RETURNTW2\" -eq 0 ]\n    then\n      exec
+    ./tinyweb &\n      export TW_PID=$!\n    else\n      echo \"Error with tinyweb,
+    either corrupt/missing\"\n    fi\n    \n\n    # Will download restic to the PV,
+    to save bandwidth and time.\n    RESTICSHA256=7B29C08BE9FC8F3E81E311CA2E1363D964884B6A89DCA2F6CD5313CD2C1087AD\n
+    \   RESULT=$(echo $RESTICSHA256\" restic\" | sha256sum -c)\n    RETURNC=$?\n    #
+    restic: OK\n    # restic: FAILED (with return code 1)\n    # restic: FAILED open
+    or read\n    if [ \"$RETURNC\" -ne 0 ]\n    then\n      curl -OL https://github.com/kempy007/restic-upx/releases/download/v0.12.0/restic\n
+    \     chmod 744 restic\n    fi\n    RESULT2=$(echo $RESTICSHA256\" restic\" |
+    sha256sum -c)\n    RETURN2=$?\n    if [ \"$RETURN2\" -eq 0 ]\n    then\n      #
+    Need to open webports incase process takes longer than 30s so healthchecks don't
+    shut us down\n      ./restic -r $OBJECTSTORE:$BACKUPURL snapshots\n      REPOINIT=$?\n
+    \     if [ \"$REPOINIT\" -ne 0 ]; then \n        ./restic -r $OBJECTSTORE:$BACKUPURL
+    init\n      fi\n      ./restic -r $OBJECTSTORE:$BACKUPURL backup /sonatype-work\n
+    \     ./restic -r $OBJECTSTORE:$BACKUPURL forget --prune --keep-daily 7 --keep-monthly
+    12 --keep-yearly 3\n    else\n      echo \"Error with restic, either corrupt/missing\"\n
+    \   fi\n    echo \"###########################\"\n    echo \"#####  storage stats
+    \ #####\"\n    echo \"###########################\"\n    df -h\n    TEST=$(df
+    -h | egrep [7-9][0-9]%) # has formatting issue in teams post, cuts it off.\n    #
+    Close our tinyweb healthcheck helper\n    kill $TW_PID\n    postTeamsMsg $TEST\n
+    \   echo \"Backup complete\"\n}\n\nrunProgram() {\n    echo \"Starting Program\"\n
+    \   # Runs original program entrypoint\n    cd /opt/sonatype/nexus-iq-server/\n
+    \   if [ -f \"start-nexus-iq-server.sh\" ] \n    then \n      export RUNSCRIPT=\"./start-nexus-iq-server.sh\"
+    \n    fi\n    if [ -f \"start.sh\" ] \n    then\n      export RUNSCRIPT=\"./start.sh\"
+    \n    fi\n    exec $RUNSCRIPT &\n    #ping localhost -t &\n\n    # Gets the PID
+    of program\n    RUN_PID=$!\n    echo \"Program started with PID: \"$RUN_PID\n\n
+    \   # debounce our backup scheduler from looping\n    DURATION=$(($WINDOW+3))m\n
+    \   sleep $DURATION\n\n    echo \"Entering wait loop for next schedule\"\n    touch
+    .runcmd\n    while [ -f \".runcmd\" ]\n    do\n    if checkSchedule; then rm .runcmd
+    && stopProgram $RUN_PID; fi;\n    sleep 30\n    echo \"Slept 30\"\n    done\n}\n\nstopProgram()
+    {\n    echo \"Stopping Program\"\n    RUN_PID=$1\n    # Graceful Kill the process
+    (sigterm):\n    kill $RUN_PID\n    sleep 10\n\n    # Kills the process (sigkill):\n
+    \   kill -9 $RUN_PID\n}\n\npostTeamsMsg() {\n  WEBHOOK_URL=$TEAMSWH\n  TITLE=\"Nexus
+    IQ Backup\"\n  COLOR=0072C6\n  TEXT=\"Backup executed $(date)   \\r\\n \"'```'\"
+    $1 \"'```'\n  # Convert formating.\n  MESSAGE=$( echo ${TEXT} | sed 's/\"/\\\"/g'
+    | sed \"s/'/\\'/g\" )\n  JSON=\"{\\\"title\\\": \\\"${TITLE}\\\", \\\"themeColor\\\":
+    \\\"${COLOR}\\\", \\\"text\\\": \\\"${MESSAGE}\\\" }\"\n\n  # Post to Microsoft
+    Teams.\n  curl -H \"Content-Type: application/json\" -d \"${JSON}\" \"${WEBHOOK_URL}\"\n}\n\nif
+    checkSchedule\nthen \n  backup\nelse\n  echo \"Not in backup window, skipping
+    backup\"\nfi\n\nrunProgram\n"
