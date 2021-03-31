@@ -9,15 +9,14 @@
 STARTHOUR=23
 STARTMIN=50
 WINDOW=10
-export OBJECTSTORE=s3 # s3 / azure
-export AWS_ACCESS_KEY_ID=minio
-export AWS_SECRET_ACCESS_KEY=minio123
-export AZURE_ACCOUNT_NAME=REDACTED # storage account name
-export AZURE_ACCOUNT_KEY=REDACTED # storage account key
-export RESTIC_PASSWORD=REDACTED # pw for storage encryption
-#export RESTIC_PASSWORD_COMMAND=$(echo $RESTIC_PASSWORD)
-export BACKUPURL= # {bucketname}:/{folder} #http://minio.velero.svc:9000/resticiq
-export TEAMSWH=REDACTED # MS Teams webhook teams group channel
+export OBJECTSTORE=$OS01
+export AWS_ACCESS_KEY_ID=$AAKI02
+export AWS_SECRET_ACCESS_KEY=$ASAK03
+export AZURE_ACCOUNT_NAME=$AAN04
+export AZURE_ACCOUNT_KEY=$AAK05
+export RESTIC_PASSWORD=$RP06
+export BACKUPURL=$BU07
+export TEAMSWH=$TW08
 
 # check date/time within schedule, execute backup func, else execute main program.
 # grab disk usage and send somewhere
