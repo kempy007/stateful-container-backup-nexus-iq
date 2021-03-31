@@ -12,4 +12,7 @@
 
 ## manifest.yaml
 
-- 
+- Will create all resources to run this demo.
+- Need to edit secrets to reflect your environment.
+- public cloud object storage required or use minio in cluster.
+- edit configmap/start-nexus to change time and trigger demo sooner.
